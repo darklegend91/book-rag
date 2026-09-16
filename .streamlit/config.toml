@@ -1,0 +1,20 @@
+# Server deployment. The app has no per-user separation: anyone who can reach it
+# can upload books, read generated papers and use the LLM server. It therefore
+# REFUSES to start on a network address unless BOOKRAG_APP_PASSWORD is set in
+# .env — set one before exposing this.
+#
+# For local-only use instead, set address = "127.0.0.1" (no password needed).
+[server]
+address = "0.0.0.0"
+port = 8501
+headless = true
+# A long-running server does not edit its own source; watching costs CPU and
+# file handles.
+fileWatcherType = "none"
+# Raise if your books are larger than this (MB).
+maxUploadSize = 500
+# Uploads and question papers travel over this connection; keep it behind TLS.
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false

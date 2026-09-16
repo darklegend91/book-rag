@@ -1,0 +1,31 @@
+# systemd unit for the Book RAG web app.
+#   sudo cp deploy/bookrag.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bookrag
+[Unit]
+Description=Book RAG (Streamlit)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bookrag
+Group=bookrag
+WorkingDirectory=/opt/bookrag
+EnvironmentFile=/opt/bookrag/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/bookrag/.venv/bin/streamlit run app.py
+# Load the encoders right after start, so the first user doesn't wait ~14 s.
+ExecStartPost=/bin/sh -c 'sleep 5; /opt/bookrag/.venv/bin/python -m bookrag.cli warmup || true'
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening: the app only needs its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/bookrag
+
+[Install]
+WantedBy=multi-user.target

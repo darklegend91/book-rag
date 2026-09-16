@@ -1,0 +1,7 @@
+2026-09-15 12:53:28.283 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-15 12:53:29.001 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+SESSION A errors []
+SESSION B errors []
+SHARED ENGINE True SECOND SESSION HISTORY [{'role': 'user', 'content': 'Private session A question'}]
+ZERO BOOKS SELECTED [] selected_books local variable
+TABS ['💬 Chat', '📝 Question Paper', '🗂 Previous-Year Papers', '📖 Library']

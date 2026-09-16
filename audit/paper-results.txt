@@ -1,0 +1,11 @@
+false string verdict: Verdict(answerable=True, confidence=0.99, reason='', unsupported_claims=[], suggested_fix='')
+list verifier payload: AttributeError: 'list' object has no attribute 'get'
+partial MCQ checker: Verdict(answerable=True, confidence=0.99, reason='', unsupported_claims=[], suggested_fix='')
+MCQ missing options: (Verdict(answerable=True, confidence=0.99, reason='', unsupported_claims=[], suggested_fix=''), 1)
+generator malformed question item: AttributeError: 'str' object has no attribute 'get'
+exact duplicate Ohms law: False
+optional section marks: **Time:** 3 Hours  •  **Maximum Marks:** 6
+no-key JSON answer: Same temperature.
+PYQ no-sections fallback across two papers: {'title': 'Examination', 'subject': '', 'duration': '3 Hours', 'total_marks': 4, 'sections': [{'name': 'Section A (2 marks each)', 'type': 'short', 'count': 4, 'marks_each': 2, 'instructions': '', 'bloom_mix': {}, 'topics': []}], 'bloom_mix': {}, 'topics': [], 'style_guide': '', 'general_instructions': []}
+faithfulness incomplete verdicts: {'faithfulness': 1.0, 'total_claims': 1, 'supported_claims': 1, 'rows': [{'question': 'q', 'refused': False, 'claims': 1, 'supported': 1}]}
+retrieval eval all qgen fail: RetrievalMetrics(n=1, hit_at_1=0.0, hit_at_3=0.0, hit_at_k=0.0, mrr=0.0, refusal_rate=0.0, per_case=[])

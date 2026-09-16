@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+data/index/
+data/exports/
+data/books/*
+data/pyqs/*
+!data/books/.gitkeep
+!data/pyqs/.gitkeep
+.DS_Store
+# Per-run evaluation outputs; the reviewed gold sets in data/eval/ are kept.
+data/eval/gold-results-*.json
+
+# Secrets and machine-local overrides; .env.example is the tracked template.
+.env

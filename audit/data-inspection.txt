@@ -1,0 +1,18 @@
+CACHE SETTINGS {'HF_HOME': None, 'HUGGINGFACE_HUB_CACHE': None, 'TRANSFORMERS_CACHE': None, 'TIKTOKEN_CACHE_DIR': None}
+INDEX (1389, 1024) finite True unique ids 1389
+NORMS 0.9997564554214478 1.000501036643982
+CHUNKS {
+  "total": 1389,
+  "over_700": 82,
+  "over_4500": 0,
+  "max_tokens": 4326,
+  "max_page_span": 22
+}
+BOOK oceanofpdf-com-ikigai-hector-garcia-b190f5688b Ikigai: The Japanese Secret to a Long and Happy Life 82 160
+BOOK oceanofpdf-com-phased-array-antennas-2e--f6e3b787ba _OceanofPDF.com_Phased_Array_Antennas_2E_-_Arun_K_Bhattacharyya 652 707
+BOOK air-6e7ccb0526 air 652 707
+BOOK thermal-physics-019dac0665 thermal_physics 3 3
+SKIPPED [{"path": "/Users/adityapathania/Codes/curin/projects/Book_chat/data/books/_OceanofPDF.com_The_Elements_of_Style_Illustrated_-_William_Strunk_Jr.pdf", "quality": {"lines": 2, "median_len": 14.0, "fragment_ratio": 0.0, "chars_per_page": 0.2, "ok": false, "reason": "no usable text layer (scanned images?)"}}, {"path": "/Users/adityapathania/Codes/curin/projects/Book_chat/data/books/a477b5fbc2dee5e3b6851957704ae14b_lecture10.pdf", "quality": {"lines": 1169, "median_len": 1.0, "fragment_ratio": 0.772, "chars_per_page": 296.2, "ok": false, "reason": "text layer fragmented into per-glyph pieces"}}, {"path": "/Users/adityapathania/Codes/curin/projects/Book_chat/data/books/antena.pdf", "quality": {"lines": 2090, "median_len": 1.0, "fragment_ratio": 0.819, "chars_per_page": 345.7, "ok": false, "reason": "text layer fragmented into per-glyph pieces"}}]
+EXISTING EVAL eval_faithfulness.json {"faithfulness": 1.0, "total_claims": 16, "supported_claims": 16, "rows": [{"question": "What is the Carnot cycle?", "refused": false, "claims": 11, "supported": 11}, {"question": "How is entropy defined statistically?", "refused": false, "claims": 5, "supported": 5}]}
+EXISTING EVAL eval_retrieval.json {"n": 3, "hit_at_1": 1.0, "hit_at_3": 1.0, "hit_at_k": 1.0, "mrr": 1.0, "refusal_rate": 0.0, "per_case": [{"question": "What is the formula for entropy according to Boltzmann's statistical interpretation?", "gold": "thermal-physics-019dac0665::00002", "rank": 1, "top_score": 0.982624351978302}, {"question": "What is the value of the universal gas constant R mentioned in the text?", "gold": "thermal-physics-019dac0665::00001", "rank": 1, "top_score": 0.9276259541511536}, {"question": "What equation relates the standard Gibbs free energy change to the equilibrium constant K?", "gold": "thermal-physics-019dac0665::00003", "rank": 1, "top_score": 0.9994296431541443}]}
+LARGEST [('oceanofpdf-com-phased-array-antennas-2e--f6e3b787ba::00650', 4326, 691, 706), ('air-6e7ccb0526::00650', 4326, 691, 706), ('oceanofpdf-com-phased-array-antennas-2e--f6e3b787ba::00004', 3823, 9, 19), ('air-6e7ccb0526::00004', 3823, 9, 19), ('oceanofpdf-com-phased-array-antennas-2e--f6e3b787ba::00646', 3464, 691, 706)]

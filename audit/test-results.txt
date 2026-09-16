@@ -1,0 +1,172 @@
+test_chunk_hard_token_limit (test_audit.Audit.test_chunk_hard_token_limit) ... FAIL
+test_context_contains_top_hit_after_expansion (test_audit.Audit.test_context_contains_top_hit_after_expansion) ... FAIL
+test_distinct_files_have_distinct_ids (test_audit.Audit.test_distinct_files_have_distinct_ids) ... FAIL
+test_docx_table_content_is_loaded (test_audit.Audit.test_docx_table_content_is_loaded) ... FAIL
+test_empty_context_does_not_call_llm (test_audit.Audit.test_empty_context_does_not_call_llm) ... FAIL
+test_fallback_before_first_token (test_audit.Audit.test_fallback_before_first_token) ... ok
+test_header_removal_preserves_body_occurrence (test_audit.Audit.test_header_removal_preserves_body_occurrence) ... FAIL
+test_invalid_citation_is_not_accepted (test_audit.Audit.test_invalid_citation_is_not_accepted) ... FAIL
+test_json_repair (test_audit.Audit.test_json_repair) ... ok
+test_leading_fragment_preserves_chapter (test_audit.Audit.test_leading_fragment_preserves_chapter) ... FAIL
+test_markdown_h2_does_not_become_chapter (test_audit.Audit.test_markdown_h2_does_not_become_chapter) ... FAIL
+test_no_fallback_after_first_token (test_audit.Audit.test_no_fallback_after_first_token) ... ok
+test_ollama_health_checks_exact_tag (test_audit.Audit.test_ollama_health_checks_exact_tag) ... FAIL
+test_page_citations_track_split_pages (test_audit.Audit.test_page_citations_track_split_pages) ... FAIL
+test_refusal_stream_contract (test_audit.Audit.test_refusal_stream_contract) ... ok
+test_repeated_store_save_refreshes_bm25 (test_audit.Audit.test_repeated_store_save_refreshes_bm25) ... FAIL
+test_router_respects_model_unavailable (test_audit.Audit.test_router_respects_model_unavailable) ... FAIL
+test_store_roundtrip (test_audit.Audit.test_store_roundtrip) ... ok
+test_uncited_answer_refused (test_audit.Audit.test_uncited_answer_refused) ... ok
+test_unknown_book_filter_returns_nothing (test_audit.Audit.test_unknown_book_filter_returns_nothing) ... FAIL
+
+======================================================================
+FAIL: test_chunk_hard_token_limit (test_audit.Audit.test_chunk_hard_token_limit)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 52, in test_chunk_hard_token_limit
+    self.assertTrue(all(c.token_count<=110 for c in chunks),[c.token_count for c in chunks])
+AssertionError: False is not true : [2000]
+
+======================================================================
+FAIL: test_context_contains_top_hit_after_expansion (test_audit.Audit.test_context_contains_top_hit_after_expansion)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 101, in test_context_contains_top_hit_after_expansion
+    self.assertIn('CRITICAL ANSWER',context)
+AssertionError: 'CRITICAL ANSWER' not found in ''
+
+======================================================================
+FAIL: test_distinct_files_have_distinct_ids (test_audit.Audit.test_distinct_files_have_distinct_ids)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 68, in test_distinct_files_have_distinct_ids
+    self.assertNotEqual(book_id_for(p),book_id_for(q))
+AssertionError: 'book-144f4c3fcb' == 'book-144f4c3fcb'
+
+======================================================================
+FAIL: test_docx_table_content_is_loaded (test_audit.Audit.test_docx_table_content_is_loaded)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 75, in test_docx_table_content_is_loaded
+    self.assertIn('CRITICAL_TABLE_CONTENT',' '.join(p.text for p in pages))
+AssertionError: 'CRITICAL_TABLE_CONTENT' not found in 'Ordinary body.'
+
+======================================================================
+FAIL: test_empty_context_does_not_call_llm (test_audit.Audit.test_empty_context_does_not_call_llm)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 108, in test_empty_context_does_not_call_llm
+    llm.chat.assert_not_called()
+  File "/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versions/3.11/lib/python3.11/unittest/mock.py", line 900, in assert_not_called
+    raise AssertionError(msg)
+AssertionError: Expected 'chat' to not have been called. Called 1 times.
+Calls: [call([{'role': 'system', 'content': "You are a precise study assistant answering strictly from a set of books.\n\nABSOLUTE RULES:\n1. Use ONLY the numbered excerpts provided. They are the complete universe of\n   permitted knowledge. Your own prior knowledge is NOT admissible.\n2. Every factual sentence must be followed by its source marker, e.g. [3].\n   Multiple sources: [1][4].\n3. If the excerpts do not contain the answer, reply exactly:\n   NOT_IN_SOURCE: <one line naming what is missing>\n   Do not guess, extrapolate, or fill gaps from general knowledge.\n4. Never invent page numbers, chapter names, formulas, dates or figures.\n5. If excerpts conflict, say so and cite both.\n6. If the excerpts cover only part of the question, answer that part with its\n   citation and state plainly which part the books do not cover. Never bridge\n   the gap yourself.\n7. A sentence you cannot attach a marker to does not belong in the answer.\n   Delete it rather than leaving it uncited.\n8. Reproduce equations exactly as the excerpt writes them. If an excerpt's\n   mathematics arrives as scattered symbols or fragments, do NOT reassemble it\n   into an equation and do NOT dress it up in LaTeX -- say that the equation did\n   not survive extraction and cite the page so the reader can look it up.\n\nSTYLE: answer directly, no preamble. Use the book's own terminology and notation.\nStructure longer answers with short headings or bullets. Show derivations step by\nstep when the excerpts contain them."}, {'role': 'user', 'content': 'EXCERPTS\n--------\n\n--------\n\nQUESTION: Explain entropy\n\nAnswer using only the excerpts above, with [n] citations.'}], temperature=0.1)].
+
+======================================================================
+FAIL: test_header_removal_preserves_body_occurrence (test_audit.Audit.test_header_removal_preserves_body_occurrence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 84, in test_header_removal_preserves_body_occurrence
+    self.assertTrue(any(b['text']=='Repeated Header' and b['y']==150 for b in cleaned[0].blocks))
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_invalid_citation_is_not_accepted (test_audit.Audit.test_invalid_citation_is_not_accepted)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 114, in test_invalid_citation_is_not_accepted
+    self.assertFalse(answer.grounded)
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_leading_fragment_preserves_chapter (test_audit.Audit.test_leading_fragment_preserves_chapter)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 57, in test_leading_fragment_preserves_chapter
+    self.assertEqual((intro.chapter,intro.page_start),('Chapter 1',1))
+AssertionError: Tuples differ: ('Chapter 2', 2) != ('Chapter 1', 1)
+
+First differing element 0:
+'Chapter 2'
+'Chapter 1'
+
+- ('Chapter 2', 2)
+?           ^   ^
+
++ ('Chapter 1', 1)
+?           ^   ^
+
+
+======================================================================
+FAIL: test_markdown_h2_does_not_become_chapter (test_audit.Audit.test_markdown_h2_does_not_become_chapter)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 92, in test_markdown_h2_does_not_become_chapter
+    self.assertEqual(sub['chapter'],'Chapter One')
+AssertionError: 'Heat Capacity' != 'Chapter One'
+- Heat Capacity
++ Chapter One
+
+
+======================================================================
+FAIL: test_ollama_health_checks_exact_tag (test_audit.Audit.test_ollama_health_checks_exact_tag)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 130, in test_ollama_health_checks_exact_tag
+    self.assertFalse(llm.health_check()['primary_ok'])
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_page_citations_track_split_pages (test_audit.Audit.test_page_citations_track_split_pages)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 62, in test_page_citations_track_split_pages
+    self.assertEqual((chunks[0].page_start,chunks[0].page_end),(1,1))
+AssertionError: Tuples differ: (1, 2) != (1, 1)
+
+First differing element 1:
+2
+1
+
+- (1, 2)
+?     ^
+
++ (1, 1)
+?     ^
+
+
+======================================================================
+FAIL: test_repeated_store_save_refreshes_bm25 (test_audit.Audit.test_repeated_store_save_refreshes_bm25)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 48, in test_repeated_store_save_refreshes_bm25
+    self.assertEqual(len(s.bm25.get_scores(['gamma'])),1)
+AssertionError: 2 != 1
+
+======================================================================
+FAIL: test_router_respects_model_unavailable (test_audit.Audit.test_router_respects_model_unavailable)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 134, in test_router_respects_model_unavailable
+    self.assertFalse(FallbackClient(p,None).health_check()['primary_ok'])
+AssertionError: True is not false
+
+======================================================================
+FAIL: test_unknown_book_filter_returns_nothing (test_audit.Audit.test_unknown_book_filter_returns_nothing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/adityapathania/Codes/curin/projects/Book_chat/audit/test_audit.py", line 41, in test_unknown_book_filter_returns_nothing
+    self.assertEqual(s.dense_search(np.ones(2),10,['missing']),[])
+AssertionError: Lists differ: [(0, 2.0)] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+(0, 2.0)
+
+- [(0, 2.0)]
++ []
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.238s
+
+FAILED (failures=14)

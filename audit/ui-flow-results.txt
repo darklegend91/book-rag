@@ -1,0 +1,61 @@
+2026-09-15 14:18:04.163 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+initial exceptions []
+empty selection resolves to [] -> None passed to engine
+generate exceptions [] downloads 2
+after unrelated rerun downloads 0 saved preview True
+[31m──[0m[31m────────────────────[0m[31m [0m[1;31mTraceback [0m[1;2;31m(most recent call last)[0m[31m [0m[31m─────────────────────[0m[31m──[0m
+[31m [0m [2m/Users/adityapathania/Codes/curin/projects/Book_chat/.venv/lib/python3.11/si[0m [31m [0m
+[31m [0m [2mte-packages/streamlit/runtime/scriptrunner/[0m[1mexec_code.py[0m:136 in               [31m [0m
+[31m [0m exec_func_with_error_handling                                                [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m [2m/Users/adityapathania/Codes/curin/projects/Book_chat/.venv/lib/python3.11/si[0m [31m [0m
+[31m [0m [2mte-packages/streamlit/runtime/scriptrunner/[0m[1mscript_runner.py[0m:837 in           [31m [0m
+[31m [0m code_to_exec                                                                 [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m [2m/var/folders/z8/vt3m9zw97z7708hdnywdjy2m0000gn/T/tmp4t9wwy81/[0m[1m35953077f99a011[0m [31m [0m
+[31m [0m [1m05443d2b4a6771b14[0m:176 in <module>                                            [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m   [2m173 [0m[2m│   │   │   │   [0m# after streaming can be replaced, not merely warned a [31m [0m
+[31m [0m   [2m174 [0m[2m│   │   │   │   [0mslot = st.empty()                                      [31m [0m
+[31m [0m   [2m175 [0m[2m│   │   │   │   [0mwith st.spinner("Retrieving..."):                      [31m [0m
+[31m [0m [31m❱ [0m176 [2m│   │   │   │   │   [0mstream = [1;4mengine.ask(prompt, book_ids=selected_book[0m [31m [0m
+[31m [0m   [2m177 [0m[2m│   │   │   │   │   [0mwith slot.container():                             [31m [0m
+[31m [0m   [2m178 [0m[2m│   │   │   │   │   │   [0mtext = st.write_stream(stream)                 [31m [0m
+[31m [0m   [2m179 [0m[2m│   │   │   │   [0mans = engine.last_answer                               [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m [2m/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versi[0m [31m [0m
+[31m [0m [2mons/3.11/lib/python3.11/unittest/[0m[1mmock.py[0m:1124 in __call__                    [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m   [2m1121 [0m[2m│   │   [0m[2m# in the signature[0m                                            [31m [0m
+[31m [0m   [2m1122 [0m[2m│   │   [0m[96mself[0m._mock_check_sig(*args, **kwargs)                         [31m [0m
+[31m [0m   [2m1123 [0m[2m│   │   [0m[96mself[0m._increment_mock_call(*args, **kwargs)                    [31m [0m
+[31m [0m [31m❱ [0m1124 [2m│   │   [0m[94mreturn[0m [1;4;96mself[0m[1;4m._mock_call(*args, **kwargs)[0m                       [31m [0m
+[31m [0m   [2m1125 [0m[2m│   [0m                                                                  [31m [0m
+[31m [0m   [2m1126 [0m[2m│   [0m                                                                  [31m [0m
+[31m [0m   [2m1127 [0m[2m│   [0m[94mdef[0m[90m [0m[92m_mock_call[0m([96mself[0m, /, *args, **kwargs):                         [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m [2m/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versi[0m [31m [0m
+[31m [0m [2mons/3.11/lib/python3.11/unittest/[0m[1mmock.py[0m:1128 in _mock_call                  [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m   [2m1125 [0m[2m│   [0m                                                                  [31m [0m
+[31m [0m   [2m1126 [0m[2m│   [0m                                                                  [31m [0m
+[31m [0m   [2m1127 [0m[2m│   [0m[94mdef[0m[90m [0m[92m_mock_call[0m([96mself[0m, /, *args, **kwargs):                         [31m [0m
+[31m [0m [31m❱ [0m1128 [2m│   │   [0m[94mreturn[0m [1;4;96mself[0m[1;4m._execute_mock_call(*args, **kwargs)[0m               [31m [0m
+[31m [0m   [2m1129 [0m[2m│   [0m                                                                  [31m [0m
+[31m [0m   [2m1130 [0m[2m│   [0m[94mdef[0m[90m [0m[92m_increment_mock_call[0m([96mself[0m, /, *args, **kwargs):               [31m [0m
+[31m [0m   [2m1131 [0m[2m│   │   [0m[96mself[0m.called = [94mTrue[0m                                            [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m [2m/opt/homebrew/Cellar/python@3.11/3.11.14_3/Frameworks/Python.framework/Versi[0m [31m [0m
+[31m [0m [2mons/3.11/lib/python3.11/unittest/[0m[1mmock.py[0m:1183 in _execute_mock_call          [31m [0m
+[31m [0m                                                                              [31m [0m
+[31m [0m   [2m1180 [0m[2m│   │   [0meffect = [96mself[0m.side_effect                                     [31m [0m
+[31m [0m   [2m1181 [0m[2m│   │   [0m[94mif[0m effect [95mis[0m [95mnot[0m [94mNone[0m:                                        [31m [0m
+[31m [0m   [2m1182 [0m[2m│   │   │   [0m[94mif[0m _is_exception(effect):                                 [31m [0m
+[31m [0m [31m❱ [0m1183 [2m│   │   │   │   [0m[1;4;94mraise[0m[1;4m effect[0m                                          [31m [0m
+[31m [0m   [2m1184 [0m[2m│   │   │   [0m[94melif[0m [95mnot[0m _callable(effect):                               [31m [0m
+[31m [0m   [2m1185 [0m[2m│   │   │   │   [0mresult = [96mnext[0m(effect)                                 [31m [0m
+[31m [0m   [2m1186 [0m[2m│   │   │   │   [0m[94mif[0m _is_exception(result):                             [31m [0m
+[31m────────────────────────────────────────────────────────────────────────────────[0m
+[1;91mRuntimeError: [0msimulated backend disconnect
+backend error exceptions ['simulated backend disconnect']
+chat model qwen3:8b paper client is sidebar client True

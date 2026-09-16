@@ -1,0 +1,272 @@
+# ============================================================
+#  Book-RAG configuration
+#  Every knob the pipeline reads lives here. Edit, don't fork.
+# ============================================================
+
+paths:
+  books_dir:   data/books        # drop your PDFs / EPUBs here
+  pyq_dir:     data/pyqs         # previous-year question papers
+  index_dir:   data/index        # built index artefacts (gitignored)
+  export_dir:  data/exports      # generated question papers
+
+# ---------------- Ingestion ----------------
+ingest:
+  # Structure-aware chunking. Sizes are in TOKENS, not characters.
+  chunk_tokens: 700
+  chunk_overlap_tokens: 120
+  min_chunk_tokens: 60           # merge fragments smaller than this
+  # A span is treated as a heading when its font size exceeds the body
+  # font size by this ratio (used to rebuild chapter/section structure).
+  heading_size_ratio: 1.15
+  drop_headers_footers: true     # strip repeated page furniture
+  # Refuse documents whose PDF text layer is shredded into per-glyph fragments
+  # (typical of PowerPoint-exported lecture decks). Such files retrieve fine and
+  # then produce garbled equations, which is worse than not indexing them.
+  # Set false to index them anyway; the warning still prints.
+  skip_fragmented: true
+  # auto: when a PDF fails that check, OCR it with `ocrmypdf --force-ocr` (if
+  # installed) and index the OCR'd text instead of skipping the book. The OCR'd
+  # copy is cached under the index dir. off: never OCR.
+  ocr: auto
+  ocr_timeout_s: 3600
+  contextual_headers: true       # prepend "Book > Chapter > Section" to each chunk
+
+# ---------------- Embeddings ----------------
+embedding:
+  model: BAAI/bge-m3
+  dim: 1024
+  batch_size: 8                  # tuned for 16 GB unified memory
+  device: auto                   # auto -> mps on Apple Silicon
+  normalize: true
+  # BGE-M3 needs no query prefix; kept here for swapping in E5/GTE models.
+  query_prefix: ""
+  passage_prefix: ""
+  # auto: load without contacting Hugging Face once the weights are cached, so
+  # startup needs no network and cannot be slowed (or broken) by an update
+  # check. true forces offline, false always checks for a newer revision.
+  local_files_only: auto
+
+# ---------------- Reranking ----------------
+rerank:
+  enabled: true
+  model: BAAI/bge-reranker-v2-m3
+  batch_size: 8
+  # Truncation length for each (query, passage) pair. Chunks are 700 tokens, so
+  # 512 clips only the tail of the longest ones while roughly halving attention
+  # cost. Do not lower it: at 384 the gold set refused two questions it answers
+  # here, because the passage tail carrying the answer was cut before scoring.
+  max_length: 512
+  # Documents entering the reranker (from fused hybrid candidates).
+  # Rerank time is linear in this and it is by far the most expensive retrieval
+  # stage. Measured on the 780-chunk index with the gold set (13 cases):
+  #   20 cand / 512 len : 2.74 s, 8/8 answered, right page cited 88%
+  #   12 cand / 512 len : 1.75 s, 8/8 answered, right page cited 100%   <- here
+  #   20 cand / 384 len : 2.08 s, 6/8 answered  (truncation, not the count,
+  #                       pushed two answers below the refusal threshold)
+  # Re-measure with `eval gold` before changing this.
+  candidates: 12
+  # Documents surviving into the LLM context.
+  top_k: 8
+  # Chunks scoring below this after reranking are discarded outright.
+  # This is the main lever for "never answer outside the book".
+  # sentence-transformers applies a sigmoid to this model's single output head,
+  # so scores are probabilities in [0, 1] -- NOT logits. The old -2.0 was below
+  # every possible score, so nothing was ever discarded and the floor was inert.
+  # Measured on this index: on-book questions score 0.29-0.96, off-book ones
+  # 0.00002-0.0004. Three orders of magnitude of headroom.
+  min_score: 0.02
+  # See embedding.local_files_only.
+  local_files_only: auto
+
+# ---------------- Retrieval ----------------
+retrieval:
+  dense_top_k: 40
+  bm25_top_k: 40
+  rrf_k: 60                      # Reciprocal Rank Fusion constant
+  # Both of these buy recall with a full LLM round-trip each, on the critical
+  # path, before any searching starts. On a 16 GB box that was the bulk of
+  # time-to-first-token. Off by default; turn one back on if you find questions
+  # the books cover but retrieval misses.
+  multi_query: false             # LLM rewrites the query N ways
+  multi_query_n: 3
+  hyde: false                    # hypothetical-answer embedding
+  neighbor_window: 1             # also pull N adjacent chunks for continuity
+  # Must leave room inside llm.num_ctx for the system prompt and the answer.
+  # At num_ctx 8192: ~4500 context + ~700 prompt leaves ~3000 for generation.
+  max_context_tokens: 4500
+
+# ---------------- Local models ----------------
+# Every value below can come from .env (see .env.example). A real shell
+# variable wins over the file, so you can override for one run:
+#   BOOKRAG_LLM_PROVIDER=ollama streamlit run app.py
+llm:
+  # Which backend answers: `openai` (any OpenAI-compatible server -- vLLM,
+  # llama.cpp server, LM Studio, LocalAI, text-generation-webui) or `ollama`.
+  provider: ${BOOKRAG_LLM_PROVIDER:-ollama}
+
+  # Your own server. Only read when provider (or fallback.provider) is `openai`.
+  openai:
+    # Must include the /v1 suffix that the OpenAI API spec puts there.
+    base_url:   ${BOOKRAG_LLM_BASE_URL:-http://localhost:8000/v1}
+    model:      ${BOOKRAG_LLM_MODEL:-}
+    fast_model: ${BOOKRAG_LLM_FAST_MODEL:-}
+    # Most local servers ignore this; send anything non-empty if yours wants a
+    # bearer token. Keep the real value in .env, never in this file.
+    api_key:    ${BOOKRAG_LLM_API_KEY:-}
+    # Reasoning models (Qwen3, DeepSeek-R1 distills) think out loud by default,
+    # and vLLM returns that inside the answer. `false` sends
+    # chat_template_kwargs {enable_thinking: false}, which vLLM and SGLang
+    # honour. Leave empty for servers that reject unknown request fields.
+    enable_thinking: ${BOOKRAG_LLM_ENABLE_THINKING:-}
+    # Ask the server to constrain replies to JSON (response_format). `false`
+    # relies on the prompt plus the JSON repair loop instead -- use it when
+    # the server is slow or stalls on constrained decoding.
+    json_mode: ${BOOKRAG_LLM_JSON_MODE:-true}
+
+  # When the primary backend is unreachable, retry the call on this one instead
+  # of failing the question. Per-call and stateless: the primary is used again
+  # as soon as it answers. Streaming only fails over before the first token.
+  fallback:
+    enabled:  ${BOOKRAG_LLM_FALLBACK:-true}
+    provider: ${BOOKRAG_LLM_FALLBACK_PROVIDER:-ollama}
+
+  host: ${BOOKRAG_OLLAMA_HOST:-http://localhost:11434}
+  # Heavy reasoning: grounded answering, question writing, verification.
+  # This is the startup default only -- pick a different model at runtime from
+  # the Streamlit sidebar, `cli ask --model`, or `/model` in `cli chat`.
+  # Switching evicts the previous model, so only one is ever resident.
+  # Measured here: qwen3:8b ~9.8 tok/s / 5.2 GB, qwen3:4b-instruct ~15.3 tok/s
+  # / 2.5 GB.
+  primary: qwen3:8b
+  # Cheap high-volume calls: PYQ parsing and paper-generation scaffolding.
+  # Chat no longer makes any `fast` calls at all (multi-query and HyDE are off),
+  # so the old worry about holding two models during a query does not apply.
+  # Measured on this machine: qwen3:8b decodes ~9.8 tok/s, qwen3:4b-instruct
+  # ~15.3 tok/s at half the resident size (2.5 GB vs 5.2 GB).
+  fast: qwen3:4b-instruct
+  temperature: 0.1               # low = faithful to source
+  generation_temperature: 0.35   # slightly higher when writing questions
+  # 8192 keeps the KV cache near ~0.6 GB. At 16384 the same model costs 7.4 GB
+  # resident instead of ~5.8 GB. Raise only if you have memory to spare.
+  num_ctx: 8192
+  timeout_s: 600
+  # Connecting gets its own short limit, so an unreachable server fails over
+  # to the fallback in seconds instead of after the full timeout above.
+  connect_timeout_s: 5
+  think: false                   # disable qwen3 <think> blocks for speed
+
+# ---------------- Memory management ----------------
+# Tuned for 16 GB unified memory (Apple Silicon). See bookrag/memory.py.
+memory:
+  # How aggressively models are unloaded between pipeline stages.
+  #
+  #   balanced      Keep the embedder, reranker and LLM resident together
+  #                 (~8.4 GB) and only release something when free memory drops
+  #                 below min_free_gb. Fastest; the default for 16 GB.
+  #
+  #   conservative  Strict hand-off -- each stage owns the machine alone, so the
+  #                 peak is one model (~6.2 GB) instead of three. The cost is
+  #                 real: measured on this box, retrieval goes 6s -> 25s per
+  #                 query, because both encoders reload from disk every time.
+  #                 Only worth it when the alternative is swapping -- 8 GB
+  #                 machines, or when something else large is running.
+  profile: balanced
+  # Load BGE-M3 and the reranker in half precision: ~2.3 GB -> ~1.15 GB each,
+  # at no accuracy cost (these encoders are published in fp16).
+  fp16_encoders: true
+  # How long Ollama holds a model after the last call.
+  ollama_keep_alive: 5m
+  # Ingest is a batch stage that ends; release the embedder when it does.
+  unload_after_ingest: true
+  # Reranking 40 long passages leaves ~1 GB of activation buffers cached by the
+  # Metal/CUDA allocator, on top of ~1.06 GB of live weights. Returning that
+  # cache after each rerank nearly halves the stage. Set false to trade ~1 GB
+  # for slightly lower per-query latency.
+  # Off: with max_length 512 and 24 candidates the buffers are far smaller than
+  # the comment above assumed, and freeing them every query cost more than it
+  # saved.
+  empty_cache_after_rerank: false
+  # The headroom the arbiter defends. `balanced` uses it as-is as the trigger
+  # for releasing the encoders before generation; `conservative` doubles it.
+  # Also the level cli `doctor` warns at.
+  min_free_gb: 2.0
+
+# ---------------- Grounding / anti-hallucination ----------------
+grounding:
+  # Chat refuses when no chunk clears this reranker score. Probability, not a
+  # logit -- see rerank.min_score. This is what stops an off-book question from
+  # ever reaching the LLM, which also makes refusals fast (~3s, no generation).
+  answer_threshold: 0.05
+  # Answers with no [n] citation, or citing a passage that wasn't retrieved,
+  # are refused.
+  require_citations: true
+  # Stricter: also refuse when any substantive sentence (6+ words) carries no
+  # citation. Off by default because list lead-ins and connective sentences
+  # trip it; turn on when you'd rather refuse than risk an uncited claim.
+  require_sentence_citations: false
+  # After an answer passes the citation checks, a separate temperature-0 LLM
+  # pass checks each cited statement against the passage it cites, and the
+  # answer is refused if any statement isn't supported. Costs one extra short
+  # call per answer (one per 12 statements for long answers). Set false to
+  # trade that safety for latency.
+  verify_answer_claims: true
+  # fast | primary. `fast` keeps the added latency small and falls back to the
+  # primary model if the fast one is missing or errors.
+  claim_check_model: fast
+  # Every generated exam question is re-checked against its source chunks
+  # by an independent LLM pass; failures are regenerated.
+  verify_questions: true
+  verification_retries: 2
+  # A question is accepted only at or above this verifier confidence.
+  min_verify_confidence: 0.7
+
+# ---------------- Question-paper defaults ----------------
+paper:
+  title: "End-Semester Examination"
+  total_marks: 70
+  duration: "3 Hours"
+  # Bloom's-taxonomy mix used when no PYQ profile is supplied.
+  bloom_mix:
+    remember: 0.15
+    understand: 0.25
+    apply: 0.25
+    analyze: 0.20
+    evaluate: 0.10
+    create: 0.05
+  # Default section blueprint (overridden by --blueprint or a PYQ profile).
+  # Optional per section: `instructions: "Answer ANY TWO."` and/or `attempt: 2`
+  # make only that many questions count towards the maximum marks.
+  sections:
+    - name: "Section A - Short Answer"
+      type: short
+      count: 10
+      marks_each: 2
+    - name: "Section B - Descriptive"
+      type: long
+      count: 5
+      marks_each: 6
+    - name: "Section C - Analytical"
+      type: long
+      count: 2
+      marks_each: 10
+  include_answer_key: true
+
+# ---------------- Web app ----------------
+ui:
+  # How long the sidebar's model-server status and model list are reused before
+  # a background refresh. Each is a network call, and an unreachable backend
+  # costs a full connect timeout, so re-checking them on every rerun made every
+  # click wait seconds.
+  status_ttl_s: 20
+
+# ---------------- Web app access ----------------
+app:
+  # Required whenever Streamlit listens beyond this machine (server.address in
+  # .streamlit/config.toml other than 127.0.0.1). Put the real value in .env.
+  password: ${BOOKRAG_APP_PASSWORD:-}
+
+# ---------------- Evaluation ----------------
+evaluate:
+  # Claims scored per answer by `eval faithfulness`. Claims beyond this are
+  # reported as unscored rather than silently dropped.
+  max_claims: 40
