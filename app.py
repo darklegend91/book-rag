@@ -17,13 +17,13 @@ from bookrag.config import load_config
 from bookrag.index.store import Store
 from bookrag.jobs import Job
 from bookrag.logs import setup_logging
+from bookrag.websafe import LOCAL_ADDRESSES, client_address, safe_markdown, save_uploads
 
 setup_logging()
 
 st.set_page_config(page_title="Book RAG — Chat & Exam Builder", page_icon="📚", layout="wide")
 cfg = load_config()
 
-_LOCAL_ADDRESSES = {"127.0.0.1", "localhost", "::1"}
 # Set by nginx, Cloudflare Tunnel and similar. A proxy on this machine makes
 # every visitor look local, so these decide whether the app is really local-only.
 _PROXY_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded")
@@ -46,17 +46,11 @@ def request_headers() -> dict[str, str]:
 
 
 def client_id(headers: dict[str, str]) -> str:
-    """The visitor's address. Behind a proxy the socket peer is the proxy itself,
-    so the header it adds is used instead."""
-    forwarded = (headers.get("cf-connecting-ip")
-                 or headers.get("x-forwarded-for", "").split(",")[0].strip()
-                 or headers.get("x-real-ip"))
-    if forwarded:
-        return forwarded
     try:
-        return st.context.ip_address or "unknown"
+        peer = st.context.ip_address or "unknown"
     except Exception:
-        return "unknown"
+        peer = "unknown"
+    return client_address(peer, headers)
 
 
 def require_access() -> None:
@@ -76,7 +70,7 @@ def require_access() -> None:
     proxied = any(h in headers for h in _PROXY_HEADERS)
 
     if not password:
-        if address in _LOCAL_ADDRESSES and not proxied:
+        if address in LOCAL_ADDRESSES and not proxied:
             return
         if proxied:
             st.error("This app is being reached through a proxy or tunnel, so it is not "
@@ -471,7 +465,8 @@ with tab_chat:
 
         for m in st.session_state.messages:
             with st.chat_message(m["role"]):
-                st.markdown(m["content"])
+                st.markdown(safe_markdown(m["content"]) if m["role"] == "assistant"
+                            else m["content"])
                 if m.get("citations"):
                     with st.expander("Sources"):
                         for line in m["citations"]:
@@ -492,8 +487,12 @@ with tab_chat:
                     apply_model_choice()
                     with st.spinner("Searching and checking against the books..."):
                         stream = engine.ask(prompt, book_ids=selected_books, stream=True)
-                        with slot.container():
-                            text = st.write_stream(stream)
+                        # Rendered by hand, not st.write_stream, so every
+                        # partial answer passes through safe_markdown first.
+                        text = ""
+                        for piece in stream:
+                            text += str(piece)
+                            slot.markdown(safe_markdown(text))
                     ans = engine.last_answer
                     if ans and ans.grounded:
                         # Only the passages the answer cites, identical labels merged.
@@ -501,7 +500,7 @@ with tab_chat:
                     if ans and not ans.grounded:
                         slot.empty()
                         text = ans.text
-                        slot.warning(text)
+                        slot.warning(safe_markdown(text))
                     if ans and ans.retrieval and ans.retrieval.warnings:
                         st.caption("⚠️ " + plain(" · ".join(ans.retrieval.warnings)))
                     if ans and ans.retrieval and ans.retrieval.timings:
@@ -635,7 +634,8 @@ with tab_paper:
                          "downloaded as Markdown.")
             else:
                 st.success("Saved: " + plain(", ".join(res["saved"])))
-            st.download_button("Download Markdown", res["md"], file_name="question_paper.md",
+            st.download_button("Download Markdown", safe_markdown(res["md"]),
+                               file_name="question_paper.md",
                                key="dl_md")
             if res["docx"]:
                 st.download_button("Download DOCX", res["docx"][1], file_name=res["docx"][0],
@@ -645,7 +645,7 @@ with tab_paper:
                     for rej in res["rejections"]:
                         st.caption(f"**{plain(rej['topic'][:60])}** — {plain(rej['reason'])}")
             st.markdown("---")
-            st.markdown(res["md"])
+            st.markdown(safe_markdown(res["md"]))
 
 # ---------------------------------------------------------------- pyq tab
 with tab_pyq:
@@ -659,9 +659,11 @@ with tab_pyq:
     uploads = st.file_uploader("Upload PYQ papers", type=["pdf", "txt", "docx"],
                                accept_multiple_files=True)
     if uploads:
-        for up in uploads:
-            (pyq_dir / Path(up.name).name).write_bytes(up.getbuffer())
-        st.success(f"Saved {len(uploads)} file(s) to {plain(pyq_dir)}")
+        saved, skipped = save_uploads(uploads, pyq_dir, {".pdf", ".txt", ".docx"})
+        if saved:
+            st.success(f"Saved {len(saved)} file(s) to {plain(pyq_dir)}")
+        for reason in skipped:
+            st.warning("Not saved: " + plain(reason))
 
     existing = sorted(p for p in pyq_dir.glob("*") if p.suffix.lower() in {".pdf", ".txt", ".docx"})
     st.write(f"**{len(existing)} paper(s) available:** " +
@@ -714,9 +716,12 @@ with tab_lib:
     uploads = st.file_uploader("Upload books", type=["pdf", "epub", "txt", "md", "docx"],
                                accept_multiple_files=True, key="bookup")
     if uploads:
-        for up in uploads:
-            (books_dir / Path(up.name).name).write_bytes(up.getbuffer())
-        st.success(f"Saved {len(uploads)} file(s). Rebuild the index below.")
+        from bookrag.ingest.loaders import SUPPORTED
+        saved, skipped = save_uploads(uploads, books_dir, SUPPORTED)
+        if saved:
+            st.success(f"Saved {len(saved)} file(s). Rebuild the index below.")
+        for reason in skipped:
+            st.warning("Not saved: " + plain(reason) + ". Rename it to add it as a new book.")
 
     from bookrag.index.builder import build_index, cached_book_count
     from bookrag.ingest.loaders import discover_books

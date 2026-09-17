@@ -31,7 +31,7 @@ Edit `.env` (created from `deploy/env.server.example`):
 - **`HF_HOME`** — a persistent path; the encoder weights are ~4.6 GB.
 
 `.streamlit/config.toml` already binds `0.0.0.0:8501`, disables file watching
-and allows 500 MB uploads.
+and allows 200 MB uploads.
 
 ## 3. First run
 
@@ -115,6 +115,33 @@ is harmless. Before switching for users, run the gold set against both models
 new one only if it answers and refuses the same questions. Keep BGE-M3 and the
 BGE reranker: they are ~3 GB together, and replacing either means rebuilding
 the index (embedder) or recalibrating `grounding.answer_threshold` (reranker).
+
+## Security checklist
+
+The app code handles its own part (password gate that also applies behind a
+proxy or tunnel, sign-in lockout, disarmed links and images in answers, upload
+checks, no unpickling, zip-bomb limits). These are the server's part:
+
+- **vLLM has no authentication by default.** Anyone who can reach port 8000 can
+  use the GPU. Start it with `--api-key <secret>` and put the same value in
+  `BOOKRAG_LLM_API_KEY`. The key only guards `/v1/*`, not `/metrics`, so also
+  firewall the port (or `--host 127.0.0.1` if only this app uses it).
+- **Serve the app on 127.0.0.1 only**, behind nginx or `cloudflared`, so the
+  proxy (and Cloudflare Access, if used) cannot be bypassed from the LAN.
+- **Put Cloudflare Access (or another SSO) in front** when it faces the
+  internet. Streamlit accepts uploads from any open session before sign-in, and
+  one shared password is the only other gate.
+- **Run it as its own user** with `deploy/bookrag.service`, not your login
+  account: a parser bug exploited by an uploaded file then reaches only
+  `/opt/bookrag`.
+- **`chmod 600 .env`** and use a long random password (`openssl rand -base64 24`).
+- **Turn OCR off (`ingest.ocr: off`) if strangers can upload.** `ocrmypdf` runs
+  Ghostscript on the file, which has a history of remote-code-execution bugs.
+- **Audit what is actually installed.** The server installs from the ranges in
+  `requirements.txt`, so its versions differ from `requirements.lock`, which CI
+  checks: `.venv/bin/pip install pip-audit && .venv/bin/pip-audit`.
+- **Close what else is listening on the box**: remote-desktop and game-streaming
+  services (gnome-remote-desktop, Sunshine) sit beside the app and the GPU.
 
 ## 6. Upgrades and rebuilds
 

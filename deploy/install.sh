@@ -40,6 +40,8 @@ echo "using $($PYTHON --version) from $(command -v "$PYTHON")"
 .venv/bin/pip install --extra-index-url "$TORCH_INDEX" -r requirements.txt
 
 [ -f .env ] || { cp deploy/env.server.example .env; echo "created .env from deploy/env.server.example"; }
+# It holds the app password and any LLM API key.
+chmod 600 .env
 mkdir -p data/books data/pyqs data/index data/exports data/eval
 
 echo

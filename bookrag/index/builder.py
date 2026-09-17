@@ -243,9 +243,18 @@ def _build(cfg: Config, files: list[Path], replace: bool, progress,
                 record = {**record, "path": str(path)}
                 progress(f"  -> {len(chunks)} chunks reused from an interrupted build")
             else:
-                pages, meta = load_document(
-                    path, drop_furniture=bool(cfg.get("ingest.drop_headers_footers", True))
-                )
+                try:
+                    pages, meta = load_document(
+                        path, drop_furniture=bool(cfg.get("ingest.drop_headers_footers", True))
+                    )
+                except Cancelled:
+                    raise
+                except Exception as exc:
+                    # One corrupt or hostile upload must not block indexing for
+                    # everyone sharing the library.
+                    progress(f"  ! {path.name} could not be read ({exc}). SKIPPED.")
+                    skipped.append({"path": str(path), "error": str(exc)[:500]})
+                    continue
                 q = text_quality(pages)
                 if not q["ok"] and path.suffix.lower() == ".pdf" and _ocr_enabled(cfg):
                     ocr_pdf = _ocr_copy(cfg, path, sha, progress)

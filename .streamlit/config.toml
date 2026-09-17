@@ -11,8 +11,10 @@ headless = true
 # A long-running server does not edit its own source; watching costs CPU and
 # file handles.
 fileWatcherType = "none"
-# Raise if your books are larger than this (MB).
-maxUploadSize = 500
+# MB per file. Streamlit holds uploads in memory and accepts them from any open
+# session, even before sign-in, so keep this near your largest book. Cloudflare's
+# free plan rejects requests over 100 MB regardless.
+maxUploadSize = 200
 # Uploads and question papers travel over this connection; keep it behind TLS.
 enableXsrfProtection = true
 

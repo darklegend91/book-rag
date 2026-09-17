@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+# The tests only read the repository.
+permissions:
+  contents: read
+
 jobs:
   unit:
     runs-on: ubuntu-latest
@@ -24,3 +28,8 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Audit regression tests
         run: python -m unittest discover -s audit -p 'test_audit.py' -v
+      # Fails the build when a pinned dependency has a published vulnerability.
+      - name: Known vulnerabilities
+        run: |
+          pip install pip-audit
+          pip-audit

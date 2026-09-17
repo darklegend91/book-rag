@@ -17,6 +17,34 @@ from bookrag.schemas import Page
 
 SUPPORTED = {".pdf", ".epub", ".txt", ".md", ".docx"}
 
+# EPUB and DOCX are zip archives, and their parsers inflate every member into
+# memory. A few-KB "zip bomb" upload claiming gigabytes would take the whole app
+# down, so the sizes the archive declares are checked before anything is read.
+# 2 GiB is several times the largest illustrated EPUB seen here.
+MAX_UNZIPPED_BYTES = 2 << 30
+MAX_ZIP_MEMBERS = 20_000
+
+
+def check_archive(path: Path, max_bytes: int | None = None,
+                  max_members: int | None = None) -> None:
+    import zipfile
+
+    max_bytes = MAX_UNZIPPED_BYTES if max_bytes is None else max_bytes
+    max_members = MAX_ZIP_MEMBERS if max_members is None else max_members
+
+    try:
+        with zipfile.ZipFile(path) as zf:
+            members = zf.infolist()
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"{path.name} is not a valid {path.suffix} file: {exc}") from exc
+    if len(members) > max_members:
+        raise ValueError(f"{path.name} has {len(members)} archive members "
+                         f"(limit {max_members}); refusing to open it")
+    total = sum(m.file_size for m in members)
+    if total > max_bytes:
+        raise ValueError(f"{path.name} unpacks to {total / 2**30:.1f} GiB "
+                         f"(limit {max_bytes / 2**30:.0f} GiB); refusing to open it")
+
 
 def file_sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -266,8 +294,10 @@ def load_document(path: Path, drop_furniture: bool = True) -> tuple[list[Page], 
         if drop_furniture:
             pages = strip_page_furniture(pages)
     elif suffix == ".epub":
+        check_archive(path)
         pages, meta = load_epub(path)
     elif suffix == ".docx":
+        check_archive(path)
         pages, meta = load_docx(path)
     elif suffix in {".txt", ".md"}:
         pages, meta = load_text(path)

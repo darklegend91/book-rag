@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import json
 import os
-import pickle
 import re
 import shutil
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -30,6 +30,9 @@ from bookrag.schemas import Chunk
 
 VECTORS_FILE = "vectors.npy"
 CHUNKS_FILE = "chunks.jsonl"
+# Written by older versions only; never read. Unpickling a file runs whatever
+# code it names, so a replaced index file would have been code execution. BM25 is
+# rebuilt from chunks.jsonl instead: 0.09 s for 780 chunks, ~2 s for 15,600.
 BM25_FILE = "bm25.pkl"
 MANIFEST_FILE = "manifest.json"
 POINTER_FILE = "CURRENT"
@@ -84,6 +87,7 @@ class Store:
         self._book_set: set[str] = set()
         self.vectors: np.ndarray | None = None
         self._bm25 = None
+        self._bm25_lock = threading.Lock()
         self._id_to_pos: dict[str, int] = {}
         self.manifest: dict = {}
 
@@ -116,8 +120,6 @@ class Store:
                 for c in chunks:
                     fh.write(json.dumps(c.to_dict(), ensure_ascii=False) + "\n")
             bm25 = BM25Okapi([tokenize(c.embed_text) for c in chunks])
-            with open(tmp / BM25_FILE, "wb") as fh:
-                pickle.dump(bm25, fh)
             with open(tmp / MANIFEST_FILE, "w", encoding="utf-8") as fh:
                 json.dump(manifest, fh, indent=2, ensure_ascii=False)
             os.replace(tmp, self.dir / gen)
@@ -161,8 +163,7 @@ class Store:
                 f"Index at {d} is inconsistent: {len(self.chunks)} chunks but "
                 f"{len(self.vectors)} vectors. Rebuild it with `python -m bookrag.cli ingest`."
             )
-        with open(d / BM25_FILE, "rb") as fh:
-            self._bm25 = pickle.load(fh)
+        self._bm25 = None                                  # built on first keyword search
         mpath = d / MANIFEST_FILE
         self.manifest = json.loads(mpath.read_text(encoding="utf-8")) if mpath.exists() else {}
         self._data_dir = d
@@ -181,8 +182,10 @@ class Store:
     @property
     def bm25(self):
         if self._bm25 is None:
-            with open(self._data_dir / BM25_FILE, "rb") as fh:
-                self._bm25 = pickle.load(fh)
+            from rank_bm25 import BM25Okapi
+            with self._bm25_lock:
+                if self._bm25 is None:
+                    self._bm25 = BM25Okapi([tokenize(c.embed_text) for c in self.chunks])
         return self._bm25
 
     def dense_search(self, query_vec: np.ndarray, top_k: int,
