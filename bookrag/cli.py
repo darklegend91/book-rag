@@ -155,8 +155,10 @@ def doctor(config: Optional[str] = typer.Option(None, "--config")):
                       str(repo) if state else f"{repo} — downloads on first use")
 
     try:
-        from bookrag.index.embedder import resolve_device
-        table.add_row("device", "[green]" + resolve_device(cfg.get("embedding.device", "auto")) + "[/]", "")
+        from bookrag.index.embedder import DEFAULT_MIN_FREE_GPU_GB, resolve_device
+        table.add_row("device", "[green]" + resolve_device(
+            cfg.get("embedding.device", "auto"),
+            float(cfg.get("embedding.min_free_gpu_gb", DEFAULT_MIN_FREE_GPU_GB))) + "[/]", "")
     except Exception:
         pass
 

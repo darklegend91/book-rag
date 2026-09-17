@@ -9,7 +9,7 @@ TLS reverse proxy. Adjust paths to taste.
 sudo useradd --system --create-home --home-dir /opt/bookrag bookrag
 sudo -u bookrag git clone <your-repo> /opt/bookrag      # or rsync the project
 cd /opt/bookrag
-PYTHON=python3.11 deploy/install.sh                     # TORCH_INDEX=... for CUDA
+deploy/install.sh                      # picks Python 3.10+; TORCH_INDEX=... for CUDA
 ```
 
 `requirements.lock` is pinned from macOS. On Linux the installer uses the
@@ -59,8 +59,8 @@ Measured on a 16 GB Apple Silicon box, 780-chunk index:
 
 | | |
 |---|---|
-| Retrieval, warm | ~1.3 s (reranking is ~95% of it) |
-| Answer generation | 1–10 s, on the LLM server |
+| Retrieval, warm | ~1.75 s on CPU/Apple GPU (reranking is ~95% of it) |
+| Answer generation | ~15 s for a 400-token answer (Qwen3-32B-AWQ, 33 tok/s) |
 | Cold start | ~14 s, paid once by `warmup` |
 | Memory | ~1.0–1.4 GB for both encoders, shared by all sessions |
 
@@ -69,6 +69,52 @@ single-query latency. For more concurrency, either move the encoders onto the
 GPU server (vLLM can serve BGE embeddings and reranking) or run several app
 replicas behind the proxy with sticky sessions — each replica loads its own copy
 of the models.
+
+### Sharing one GPU with vLLM
+
+vLLM claims `--gpu-memory-utilization` of the whole card when it starts, and
+keeps it. Measured on the 48 GB server (47.65 GiB usable) with vLLM 0.28 and
+Qwen/Qwen3-32B-AWQ:
+
+| `--gpu-memory-utilization` | vLLM holds | Left for the encoders | KV cache |
+|---|---|---|---|
+| 0.92 (what it ran with) | 44.7 GiB | ~2.3 GiB: not enough, chat hit CUDA out of memory | 97,664 tokens |
+| **0.82** (estimated) | ~40 GiB | ~7 GiB: both encoders fit (~3 GB) | ~78,000 tokens |
+
+At 0.82 the KV cache still holds ~10 full chat requests at once (each is at
+most ~8,000 tokens: 4,500 of passages, the prompt, the answer), so nothing is
+lost. Restart vLLM with it, then restart the app:
+
+```bash
+vllm serve Qwen/Qwen3-32B-AWQ --gpu-memory-utilization 0.82 --max-model-len 16384
+```
+
+`--max-model-len 16384` is optional; the app never sends more than ~8,000
+tokens, and the default 40,960 only lets one runaway request hog the cache.
+With `embedding.device: auto` the app checks free GPU memory as each encoder
+loads and uses the CPU instead when there is not enough (and moves to the CPU if
+a query runs out of GPU memory), so a vLLM that grows back to 0.92 slows
+retrieval down instead of breaking it. `doctor` prints the device it picked.
+
+**Where the time goes.** Retrieval takes about 0.5–2 s. The answer takes about
+15 s: Qwen3-32B-AWQ prefills a 4,000-token prompt in 2.8 s and decodes at
+33 tok/s alone, or 23 tok/s each with four users at once. Every answer also
+makes a second, shorter claim-check call (`grounding.verify_answer_claims`).
+To answer faster, change the LLM, not the encoders:
+
+| Model | Weights | Why |
+|---|---|---|
+| Qwen/Qwen3-32B-AWQ (current) | 18 GiB | Dense 32B; the gold set was measured with it |
+| Qwen/Qwen3-30B-A3B-Instruct-2507-FP8 | 29 GiB | Mixture of experts: only ~3B parameters run per token, so it should decode several times faster (not measured here). Its KV cache is smaller per token (~96 KiB vs ~256), so ~80,000 tokens still fit at 0.82. FP8 runs natively on Ada/Hopper GPUs (L40S, RTX 6000 Ada); older GPUs use a slower fallback kernel. |
+| cyankiwi/Qwen3-30B-A3B-Instruct-2507-AWQ-4bit | 17 GiB | The same model in 4-bit, for Ampere GPUs like this server's RTX A6000, which cannot run FP8 natively. A community build, not one from Qwen. |
+| Qwen/Qwen3-14B-AWQ | 9 GiB | Dense 14B: faster and leaves the most room, but the smallest and least capable of the three (not measured here) |
+
+The MoE model is not a thinking model, so `BOOKRAG_LLM_ENABLE_THINKING=false`
+is harmless. Before switching for users, run the gold set against both models
+(`eval draft-gold` for your own books, review it, then `eval gold`) and keep the
+new one only if it answers and refuses the same questions. Keep BGE-M3 and the
+BGE reranker: they are ~3 GB together, and replacing either means rebuilding
+the index (embedder) or recalibrating `grounding.answer_threshold` (reranker).
 
 ## 6. Upgrades and rebuilds
 

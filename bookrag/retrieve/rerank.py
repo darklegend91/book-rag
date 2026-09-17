@@ -9,6 +9,12 @@ books do not cover the question.
 """
 from __future__ import annotations
 
+import logging
+
+from bookrag.index.embedder import DEFAULT_MIN_FREE_GPU_GB
+
+log = logging.getLogger(__name__)
+
 _RERANKER_CACHE: dict[str, object] = {}
 
 
@@ -16,11 +22,11 @@ class Reranker:
     def __init__(self, model_name: str = "BAAI/bge-reranker-v2-m3",
                  device: str = "auto", batch_size: int = 8, fp16: bool = True,
                  release_cache: bool = True, max_length: int = 512,
-                 local_files_only: str | bool = "auto"):
+                 local_files_only: str | bool = "auto", min_free_gpu_gb: float = DEFAULT_MIN_FREE_GPU_GB):
         self.local_files_only = local_files_only
         from bookrag.index.embedder import resolve_device
         self.model_name = model_name
-        self.device = resolve_device(device)
+        self.device = resolve_device(device, min_free_gpu_gb)
         self.batch_size = batch_size
         self.fp16 = fp16
         self.release_cache = release_cache
@@ -60,7 +66,16 @@ class Reranker:
         if not passages:
             return []
         pairs = [(query, p) for p in passages]
-        scores = self.model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+        try:
+            scores = self.model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+        except Exception as exc:
+            from bookrag.index.embedder import is_gpu_oom
+            if self.device == "cpu" or not is_gpu_oom(exc):
+                raise
+            log.warning("GPU ran out of memory while reranking; moving the reranker to CPU")
+            self.unload()
+            self.device = "cpu"
+            scores = self.model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
         if self.release_cache:
             # Scoring ~40 passages at 1024 tokens leaves roughly 1 GB of
             # activation buffers in the allocator's cache. The live weights are
@@ -82,4 +97,5 @@ def reranker_from_config(cfg) -> Reranker | None:
         release_cache=bool(cfg.get("memory.empty_cache_after_rerank", False)),
         local_files_only=cfg.get("rerank.local_files_only", "auto"),
         max_length=int(cfg.get("rerank.max_length", 512)),
+        min_free_gpu_gb=float(cfg.get("embedding.min_free_gpu_gb", DEFAULT_MIN_FREE_GPU_GB)),
     )

@@ -16,5 +16,12 @@ maxUploadSize = 500
 # Uploads and question papers travel over this connection; keep it behind TLS.
 enableXsrfProtection = true
 
+[client]
+# Visitors see a generic error instead of a traceback with file paths and code;
+# the full traceback still goes to the server log.
+showErrorDetails = "none"
+# No Deploy button, rerun or settings menu for visitors.
+toolbarMode = "minimal"
+
 [browser]
 gatherUsageStats = false

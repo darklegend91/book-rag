@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, PropertyMock, patch
 
 import numpy as np
 
@@ -890,12 +890,14 @@ class OcrTests(IndexConfigMixin, unittest.TestCase):
 class AppAccessTests(unittest.TestCase):
     APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
-    def app(self, address, password=None):
+    def app(self, address, password=None, headers=None, ip="203.0.113.7"):
         import os
         import streamlit
         from contextlib import ExitStack
+        from streamlit.runtime.context import ContextProxy
         from streamlit.testing.v1 import AppTest
         real_get_option = streamlit.get_option
+        streamlit.cache_resource.clear()
         env = {k: v for k, v in os.environ.items() if k != "BOOKRAG_APP_PASSWORD"}
         if password:
             env["BOOKRAG_APP_PASSWORD"] = password
@@ -903,8 +905,52 @@ class AppAccessTests(unittest.TestCase):
         stack.enter_context(patch.dict(os.environ, env, clear=True))
         stack.enter_context(patch("streamlit.get_option", side_effect=lambda key: (
             address if key == "server.address" else real_get_option(key))))
+        stack.enter_context(patch.object(ContextProxy, "headers", new_callable=PropertyMock,
+                                         return_value=headers or {}))
+        stack.enter_context(patch.object(ContextProxy, "ip_address", new_callable=PropertyMock,
+                                         return_value=ip))
         self.addCleanup(stack.close)
         return AppTest.from_file(self.APP)
+
+    @staticmethod
+    def gate_messages(at):
+        # Past the gate the app may still report other things, e.g. an unreachable LLM.
+        return [e.value for e in at.error if "password" in e.value.lower() or "proxy" in e.value]
+
+    def sign_in(self, at, password):
+        at.text_input[0].set_value(password)
+        return at.button[0].click().run(timeout=60)
+
+    def test_local_address_behind_a_tunnel_still_needs_a_password(self):
+        # cloudflared/nginx on this machine connect from 127.0.0.1; only their headers tell.
+        at = self.app("127.0.0.1").run(timeout=60)
+        self.assertFalse(self.gate_messages(at))
+        self.assertFalse(any(t.label == "Password" for t in at.text_input))
+        at = self.app("127.0.0.1", headers={"Cf-Connecting-Ip": "198.51.100.4"}).run(timeout=60)
+        self.assertTrue(any("proxy or tunnel" in e.value for e in at.error), [e.value for e in at.error])
+        self.assertEqual(len(at.tabs), 0)
+        at = self.app("127.0.0.1", headers={"X-Forwarded-For": "198.51.100.4"}).run(timeout=60)
+        self.assertTrue(any("proxy or tunnel" in e.value for e in at.error))
+
+    def test_repeated_wrong_passwords_lock_that_client_out(self):
+        at = self.app("127.0.0.1", password="s3cret",
+                      headers={"cf-connecting-ip": "198.51.100.4"}).run(timeout=60)
+        for _ in range(5):
+            at = self.sign_in(at, "wrong")
+            self.assertTrue(any("Wrong password" in e.value for e in at.error))
+        at = self.sign_in(at, "s3cret")                       # right password, still locked
+        self.assertTrue(any("Too many wrong passwords" in e.value for e in at.error))
+        self.assertEqual(len(at.tabs), 0)
+
+        # Another visitor through the same tunnel is not affected.
+        from streamlit.testing.v1 import AppTest
+        from streamlit.runtime.context import ContextProxy
+        with patch.object(ContextProxy, "headers", new_callable=PropertyMock,
+                          return_value={"cf-connecting-ip": "192.0.2.9"}):
+            other = AppTest.from_file(self.APP).run(timeout=60)
+            other = self.sign_in(other, "s3cret")
+        self.assertFalse(self.gate_messages(other))
+        self.assertTrue(other.session_state["authenticated"])
 
     def test_network_address_without_password_is_refused(self):
         at = self.app("0.0.0.0").run(timeout=60)
@@ -961,6 +1007,150 @@ class WeightsTests(unittest.TestCase):
         cfg = Config({"embedding": {"local_files_only": True}, "rerank": {"local_files_only": "false"}})
         self.assertIs(embedder_from_config(cfg).local_files_only, True)
         self.assertEqual(reranker_from_config(cfg).local_files_only, "false")
+
+
+class DeviceSelectionTests(unittest.TestCase):
+    """A GPU shared with vLLM: 47.65 GiB total, 3.9 MiB free, every query OOM'd."""
+
+    def torch_env(self, cuda=True, free_gb=1.0, mps=False):
+        import torch
+        from contextlib import ExitStack
+        stack = ExitStack()
+        stack.enter_context(patch.object(torch.backends.mps, "is_available", return_value=mps))
+        stack.enter_context(patch.object(torch.cuda, "is_available", return_value=cuda))
+        stack.enter_context(patch.object(torch.cuda, "mem_get_info",
+                                         return_value=(int(free_gb * 1e9), int(48e9))))
+        return stack
+
+    def test_auto_picks_cpu_when_the_gpu_is_full_and_cuda_when_it_has_room(self):
+        from bookrag.index.embedder import resolve_device
+        with self.torch_env(free_gb=2.3):
+            self.assertEqual(resolve_device("auto", 6.0), "cpu")
+            self.assertEqual(resolve_device("cuda", 6.0), "cuda")      # explicit always wins
+        with self.torch_env(free_gb=20.0):
+            self.assertEqual(resolve_device("auto", 6.0), "cuda")
+        with self.torch_env(cuda=False, mps=True):
+            self.assertEqual(resolve_device("auto", 6.0), "mps")
+        with self.torch_env(cuda=False):
+            self.assertEqual(resolve_device("auto", 6.0), "cpu")
+
+    def test_reranker_still_gets_the_gpu_after_the_embedder_takes_its_share(self):
+        # vLLM at 0.82 on a 48 GB card leaves ~7 GB; the embedder then uses ~1.6 GB.
+        from bookrag.index.embedder import DEFAULT_MIN_FREE_GPU_GB, resolve_device
+        with self.torch_env(free_gb=7.0):
+            self.assertEqual(resolve_device("auto", DEFAULT_MIN_FREE_GPU_GB), "cuda")
+        with self.torch_env(free_gb=5.4):
+            self.assertEqual(resolve_device("auto", DEFAULT_MIN_FREE_GPU_GB), "cuda")
+        with self.torch_env(free_gb=2.3):                         # vLLM at 0.92
+            self.assertEqual(resolve_device("auto", DEFAULT_MIN_FREE_GPU_GB), "cpu")
+
+    def test_oom_detection(self):
+        from bookrag.index.embedder import is_gpu_oom
+        self.assertTrue(is_gpu_oom(RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")))
+        self.assertFalse(is_gpu_oom(RuntimeError("shape mismatch")))
+
+    def test_embedder_and_reranker_finish_on_cpu_after_gpu_oom(self):
+        from bookrag.index import embedder as emb_mod
+        from bookrag.retrieve import rerank as rerank_mod
+        devices = []
+
+        class FakeModel:
+            def __init__(self, name, device="cpu", **kwargs):
+                self.device = device
+                devices.append(device)
+
+            def _check(self):
+                if self.device == "cuda":
+                    raise RuntimeError("CUDA out of memory. Tried to allocate 20.00 MiB")
+
+            def encode(self, payload, **kwargs):
+                self._check()
+                return np.ones((len(payload), 4), np.float32)
+
+            def predict(self, pairs, **kwargs):
+                self._check()
+                return [0.9 for _ in pairs]
+
+        fake_loader = lambda cls, name, local_files_only, **kwargs: FakeModel(name, **kwargs)
+        try:
+            with patch("bookrag.weights.load_local_first", side_effect=fake_loader):
+                embedder = emb_mod.Embedder("fake/embedder", device="cuda", fp16=False)
+                vectors = embedder.embed_queries(["q1", "q2"])
+                reranker = rerank_mod.Reranker("fake/reranker", device="cuda", fp16=False)
+                scores = reranker.score("q", ["p1", "p2", "p3"])
+        finally:
+            for cache in (emb_mod._MODEL_CACHE, rerank_mod._RERANKER_CACHE):
+                for key in [k for k in cache if k.startswith("fake/")]:
+                    cache.pop(key)
+        self.assertEqual(vectors.shape, (2, 4))
+        self.assertEqual(scores, [0.9, 0.9, 0.9])
+        self.assertEqual((embedder.device, reranker.device), ("cpu", "cpu"))
+        self.assertEqual(devices, ["cuda", "cpu", "cuda", "cpu"])
+
+    def test_other_errors_are_not_swallowed(self):
+        from bookrag.index import embedder as emb_mod
+
+        class Broken:
+            def __init__(self, name, **kwargs):
+                pass
+
+            def encode(self, payload, **kwargs):
+                raise ValueError("bad input")
+
+        try:
+            with patch("bookrag.weights.load_local_first", side_effect=lambda c, n, l, **k: Broken(n)):
+                embedder = emb_mod.Embedder("fake/broken", device="cuda", fp16=False)
+                with self.assertRaises(ValueError):
+                    embedder.embed_queries(["q"])
+        finally:
+            for key in [k for k in emb_mod._MODEL_CACHE if k.startswith("fake/")]:
+                emb_mod._MODEL_CACHE.pop(key)
+
+
+class AppChatErrorTests(IndexConfigMixin, unittest.TestCase):
+    """The chat tab's error message must point at the real cause."""
+
+    def test_gpu_oom_and_backend_failures_get_the_right_hint(self):
+        import os
+        import streamlit
+        import streamlit as st
+        from contextlib import ExitStack
+        from streamlit.testing.v1 import AppTest
+        app_path = str(Path(__file__).resolve().parent.parent / "app.py")
+        real_get_option = streamlit.get_option
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            cfg = self.cfg(d)
+            store = Store(cfg.index_dir)
+            chunk = Chunk("b::00001", "Heat is energy.", "Heat is energy.", "b", "Book", ordinal=1)
+            store.save([chunk], np.ones((1, 2)), {"books": [{"book_id": "b", "title": "Book",
+                                                              "n_pages": 1, "n_chunks": 1}]})
+            llm = Mock()
+            llm.primary, llm.host = "m", "h"
+            llm.health_check.return_value = {"primary_ok": True, "host": "h"}
+            llm.model_catalog.return_value = []
+            env = {k: v for k, v in os.environ.items() if k != "BOOKRAG_APP_PASSWORD"}
+            for p in [patch.dict(os.environ, env, clear=True),
+                      patch("streamlit.get_option", side_effect=lambda k: (
+                          "127.0.0.1" if k == "server.address" else real_get_option(k))),
+                      patch("bookrag.config.load_config", return_value=cfg),
+                      patch("bookrag.llm.client.client_from_config", return_value=llm),
+                      patch("bookrag.retrieve.pipeline.Retriever",
+                            side_effect=lambda c: SimpleNamespace(_llm=None, reranker=None, store=store)),
+                      patch("bookrag.memory.ollama_loaded", return_value=[]),
+                      patch("bookrag.memory.system_memory_gb", return_value=(16, 8))]:
+                stack.enter_context(p)
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            at = AppTest.from_file(app_path).run(timeout=60)
+            self.assertFalse(at.exception, [e.message for e in at.exception])
+            for message, hint in [
+                ("CUDA out of memory. Tried to allocate 20.00 MiB", "GPU ran out of memory"),
+                ("connection refused", "Check the model server"),
+            ]:
+                with patch("bookrag.chat.engine.ChatEngine.ask", side_effect=RuntimeError(message)):
+                    at.chat_input[0].set_value("What is heat?").run(timeout=60)
+                self.assertFalse(at.exception, [e.message for e in at.exception])
+                self.assertTrue(any(hint in e.value for e in at.error), [e.value for e in at.error])
 
 
 if __name__ == "__main__":

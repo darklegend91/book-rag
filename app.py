@@ -24,6 +24,39 @@ st.set_page_config(page_title="Book RAG â€” Chat & Exam Builder", page_icon="ðŸ“
 cfg = load_config()
 
 _LOCAL_ADDRESSES = {"127.0.0.1", "localhost", "::1"}
+# Set by nginx, Cloudflare Tunnel and similar. A proxy on this machine makes
+# every visitor look local, so these decide whether the app is really local-only.
+_PROXY_HEADERS = ("cf-connecting-ip", "x-forwarded-for", "x-real-ip", "forwarded")
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_S = 15 * 60
+
+
+@st.cache_resource
+def login_failures() -> dict:
+    """Recent failed sign-ins per client, shared by every session. Per-session
+    counting would not slow an attacker down: a new connection is a new session."""
+    return {"lock": threading.Lock(), "by_client": {}}
+
+
+def request_headers() -> dict[str, str]:
+    try:
+        return {k.lower(): v for k, v in st.context.headers.items()}
+    except Exception:
+        return {}
+
+
+def client_id(headers: dict[str, str]) -> str:
+    """The visitor's address. Behind a proxy the socket peer is the proxy itself,
+    so the header it adds is used instead."""
+    forwarded = (headers.get("cf-connecting-ip")
+                 or headers.get("x-forwarded-for", "").split(",")[0].strip()
+                 or headers.get("x-real-ip"))
+    if forwarded:
+        return forwarded
+    try:
+        return st.context.ip_address or "unknown"
+    except Exception:
+        return "unknown"
 
 
 def require_access() -> None:
@@ -32,21 +65,28 @@ def require_access() -> None:
     There is no per-user separation inside: anyone who reaches the app can
     upload books, read generated papers and spend the LLM server's time. So it
     serves this machine only (see .streamlit/config.toml), unless a password is
-    set -- and it refuses to serve the network without one.
+    set -- and it refuses to serve the network, or a proxy/tunnel, without one.
     """
     password = os.environ.get("BOOKRAG_APP_PASSWORD") or ""
     if not password:
         configured = cfg.get("app.password")
         password = "" if configured is None else str(configured)
     address = str(st.get_option("server.address") or "").strip()
+    headers = request_headers()
+    proxied = any(h in headers for h in _PROXY_HEADERS)
 
     if not password:
-        if address in _LOCAL_ADDRESSES:
+        if address in _LOCAL_ADDRESSES and not proxied:
             return
-        st.error("This app is reachable from other machines "
-                 f"(server.address = {address or 'all interfaces'}) but no password is set. "
-                 "Either keep it on this machine with `server.address = \"127.0.0.1\"` in "
-                 ".streamlit/config.toml, or set `BOOKRAG_APP_PASSWORD` in .env and restart.")
+        if proxied:
+            st.error("This app is being reached through a proxy or tunnel, so it is not "
+                     "local-only, but no password is set. Set `BOOKRAG_APP_PASSWORD` in .env "
+                     "and restart.")
+        else:
+            st.error("This app is reachable from other machines "
+                     f"(server.address = {address or 'all interfaces'}) but no password is set. "
+                     "Either keep it on this machine with `server.address = \"127.0.0.1\"` in "
+                     ".streamlit/config.toml, or set `BOOKRAG_APP_PASSWORD` in .env and restart.")
         st.stop()
     if st.session_state.get("authenticated"):
         return
@@ -55,10 +95,25 @@ def require_access() -> None:
         attempt = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Sign in")
     if submitted:
-        if hmac.compare_digest(attempt.encode("utf-8"), password.encode("utf-8")):
+        client, failures, now = client_id(headers), login_failures(), time.monotonic()
+        with failures["lock"]:
+            by_client = failures["by_client"]
+            for key in [k for k, times in by_client.items() if now - times[-1] >= LOGIN_LOCKOUT_S]:
+                del by_client[key]
+            recent = [t for t in by_client.get(client, []) if now - t < LOGIN_LOCKOUT_S]
+            locked = len(recent) >= LOGIN_MAX_FAILURES
+            ok = not locked and hmac.compare_digest(attempt.encode("utf-8"), password.encode("utf-8"))
+            if ok:
+                by_client.pop(client, None)
+            elif not locked:
+                by_client[client] = recent + [now]
+        if ok:
             st.session_state.authenticated = True
             st.rerun()
-        st.error("Wrong password.")
+        if locked:
+            st.error(f"Too many wrong passwords. Try again in {LOGIN_LOCKOUT_S // 60} minutes.")
+        else:
+            st.error("Wrong password.")
     st.stop()
 
 
@@ -459,7 +514,12 @@ with tab_chat:
                 except Exception as exc:
                     slot.empty()
                     text = f"Couldn't answer: {exc}"
-                    slot.error(plain(text) + "\n\nCheck the model server (sidebar) and try again.")
+                    hint = ("The GPU ran out of memory for the search models. Set "
+                            "`embedding.device: cpu` in config.yaml, or give them room by "
+                            "lowering vLLM's --gpu-memory-utilization."
+                            if "out of memory" in str(exc).lower()
+                            else "Check the model server (sidebar) and try again.")
+                    slot.error(plain(text) + "\n\n" + hint)
             st.session_state.messages.append(
                 {"role": "assistant", "content": text, "citations": sources}
             )

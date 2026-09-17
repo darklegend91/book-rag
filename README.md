@@ -68,7 +68,7 @@ Run all commands below from the project root.
 You need:
 
 - macOS or Linux;
-- Python 3.11;
+- Python 3.10 or newer;
 - [Ollama](https://ollama.com/download);
 - at least 11 GB of free disk space for the downloaded models;
 - 16 GB of RAM recommended; and
@@ -598,14 +598,15 @@ Run it right after starting the app (systemd `ExecStartPost=`, a Docker healthch
 | | Measured |
 |---|---|
 | Page render, after the first | 0.03 s (the sidebar's status and model list refresh in the background) |
-| Retrieval, warm | 2.74 s, of which reranking is 2.67 s |
-| Answer generation | 1–10 s, on the LLM server |
+| Retrieval, warm | 1.75 s at `rerank.candidates: 12` (2.74 s at 20), nearly all of it reranking |
+| Answer generation | ~15 s for a 400-token answer: Qwen3-32B-AWQ on vLLM decodes 33 tok/s |
 | Cold start | 13.9 s (both encoders) |
 | Memory | ~1.0–1.4 GB for the two encoders, shared by all sessions |
 
-Reranking dominates, and it runs one query at a time: four simultaneous users measured 10.8 s each. Options, cheapest first:
+On a server the answer, not retrieval, is the slow part; see [deploy/README.md](deploy/README.md#sharing-one-gpu-with-vllm) for splitting one GPU between vLLM and the encoders, and for faster models. Retrieval runs one query at a time: four simultaneous users measured 10.8 s each on a laptop. Options, cheapest first:
 
-- **Tune it.** `rerank.candidates: 12` with `rerank.max_length: 384` measured 1.28 s (2.1x faster) and returned the same top passage on all four test queries. Confirm on your own questions with `eval gold` before keeping it.
+- **Tune it.** Already done: `rerank.candidates: 12` answered the whole gold set at 1.75 s. Lowering `rerank.max_length` to 384 as well made it refuse two questions it should answer, so it stays at 512.
+- **Put the encoders on the GPU.** `embedding.device: auto` does this when the GPU has room.
 - **Move the encoders to the GPU box.** vLLM (and similar) can serve BGE embeddings and reranking; that removes ~1 GB of local memory, the cold start, and the one-at-a-time limit.
 - **Run more replicas** behind the proxy with sticky sessions, if the encoders stay local. Each replica loads its own copy of the models.
 

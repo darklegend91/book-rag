@@ -3,13 +3,34 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON="${PYTHON:-python3.11}"
+
+# Python 3.10 or newer. 3.11 is what this was developed against; 3.10 is tested
+# to compile and run the same code. Override with PYTHON=/path/to/python.
+pick_python() {
+  if [ -n "${PYTHON:-}" ]; then echo "$PYTHON"; return; fi
+  for candidate in python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && \
+       "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)'; then
+      echo "$candidate"; return
+    fi
+  done
+  echo ""
+}
+PYTHON="$(pick_python)"
 # CPU wheels by default; for a CUDA box set e.g.
 #   TORCH_INDEX=https://download.pytorch.org/whl/cu124 deploy/install.sh
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}"
 
 cd "$APP_DIR"
-command -v "$PYTHON" >/dev/null || { echo "need $PYTHON on PATH (set PYTHON=...)"; exit 1; }
+[ -n "$PYTHON" ] || { echo "need Python 3.10+ on PATH (set PYTHON=/path/to/python)"; exit 1; }
+echo "using $($PYTHON --version) from $(command -v "$PYTHON")"
+
+# Debian/Ubuntu ship venv separately; say so before the confusing ensurepip error.
+"$PYTHON" -c "import ensurepip" 2>/dev/null || {
+  echo "this Python has no venv support; install it, e.g.:"
+  echo "  sudo apt install -y $(basename "$PYTHON")-venv"
+  exit 1
+}
 
 [ -d .venv ] || "$PYTHON" -m venv .venv
 .venv/bin/pip install --disable-pip-version-check --upgrade pip

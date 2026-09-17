@@ -18,6 +18,7 @@ tiktoken>=0.7          # token-accurate chunk sizing
 
 # --- retrieval ---
 sentence-transformers>=3.0   # BGE-M3 embeddings + BGE cross-encoder reranker
+huggingface_hub>=0.23        # imported directly to check the weight cache
 torch>=2.2
 rank-bm25>=0.2.2             # lexical retrieval
 
